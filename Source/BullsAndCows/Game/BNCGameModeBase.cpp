@@ -4,7 +4,6 @@
 #include "Game/BNCGameModeBase.h"
 
 #include "BNCGameState.h"
-#include "EngineUtils.h"
 #include "Algo/RandomShuffle.h"
 #include "Player/BNCPlayerController.h"
 #include "Player/BNCPlayerState.h"
@@ -27,16 +26,96 @@ void ABNCGameModeBase::OnPostLogin(AController* NewPlayer)
 	
 }
 
+void ABNCGameModeBase::ForEachPlayerController(TFunctionRef<void(ABNCPlayerController*)> Callback) const
+{
+	for (ABNCPlayerController* BNCPlayerController : PlayerControllers)
+	{
+		if (IsValid(BNCPlayerController))
+		{
+			Callback(BNCPlayerController);
+		}
+	}
+}
+
+bool ABNCGameModeBase::AreAllPlayersOutOfGuesses() const
+{
+	bool bAllPlayersOutOfGuesses = true;
+	ForEachPlayerController([&bAllPlayersOutOfGuesses](ABNCPlayerController* BNCPlayerController)
+	{
+		ABNCPlayerState* BNCPS = BNCPlayerController->GetPlayerState<ABNCPlayerState>();
+		if (IsValid(BNCPS) && BNCPS->GetCurrentGuessCount() < BNCPS->GetMaxGuessCount())
+		{
+			bAllPlayersOutOfGuesses = false;
+		}
+	});
+	return bAllPlayersOutOfGuesses;
+}
+
+void ABNCGameModeBase::HandleDrawGame()
+{
+	bIsPlaying = false;
+	FString DrawNotificationText = FString::Printf(TEXT("무승부"));
+	FString SystemMessage = FString::Printf(TEXT("정답은 %s이었습니다. 5초후 게임을 재시작합니다"), *Answer);
+			
+	SendSystemNotificationMessage(DrawNotificationText, FColor::Orange);
+	SendSystemChattingMessage(SystemMessage);
+	StartAnswerTimer(0);
+	GetWorldTimerManager().SetTimer(RestartTimerHandle, this, &ABNCGameModeBase::ResetGame, 5, false);
+	GetWorldTimerManager().ClearTimer(AnswerTimerHandle);
+}
+
+void ABNCGameModeBase::AdvanceCurrentPlayer()
+{
+	if (PlayerControllers.IsEmpty())
+	{
+		CurrentPlayerIndex = 0;
+		return;
+	}
+	
+	CurrentPlayerIndex++;
+	if (CurrentPlayerIndex >= PlayerControllers.Num())
+	{
+		CurrentPlayerIndex = 0;
+	}
+}
+
+void ABNCGameModeBase::StartAnswerTimer(float TimeLimit)
+{
+	if (ABNCGameState* BNCGS = GetGameState<ABNCGameState>())
+	{
+		BNCGS->SetTimeout(TimeLimit);
+	}
+	if (TimeLimit>0)
+		GetWorldTimerManager().SetTimer(AnswerTimerHandle, this, &ABNCGameModeBase::PlayerAnswerTimeout, 10, false);
+}
+
+void ABNCGameModeBase::NotifyCurrentTurnPlayer()
+{
+	if (PlayerControllers.IsValidIndex(CurrentPlayerIndex) == false)
+		return;
+	
+	ABNCPlayerController* BNCPlayerController = PlayerControllers[CurrentPlayerIndex];
+	if (IsValid(BNCPlayerController) == false)
+		return;
+	
+	ABNCPlayerState* BNCPS = BNCPlayerController->GetPlayerState<ABNCPlayerState>();
+	if (IsValid(BNCPS) == false)
+		return;
+	
+	SendSystemNotificationMessage(FString::Printf(TEXT("%s의 턴!"), *BNCPS->GetPlayerNickname()), FColor::Yellow);
+}
+
 void ABNCGameModeBase::Logout(AController* Exiting)
 {
 	Super::Logout(Exiting);
 	ABNCPlayerController* BNCPlayerController = Cast<ABNCPlayerController>(Exiting);
+	if (IsValid(BNCPlayerController) == false)
+		return;
+	
 	ABNCPlayerState* BNCPS = BNCPlayerController->GetPlayerState<ABNCPlayerState>();
-	FString Nickname = BNCPS->GetPlayerNickname();
-	if (IsValid(BNCPlayerController))
-	{
-		PlayerControllers.Remove(BNCPlayerController);
-	}
+	const FString Nickname = IsValid(BNCPS) ? BNCPS->GetPlayerNickname() : FString();
+	PlayerControllers.Remove(BNCPlayerController);
+	
 	if (PlayerControllers.Num()<=1)
 	{
 		FString GameDelayString = FString::Printf(TEXT("플레이어가 2명 미만이 되어 대기합니다."));
@@ -46,13 +125,13 @@ void ABNCGameModeBase::Logout(AController* Exiting)
 		GetWorldTimerManager().ClearTimer(AnswerTimerHandle);
 		GetWorldTimerManager().ClearTimer(RestartTimerHandle);
 		ABNCGameState* BNCGS = GetGameState<ABNCGameState>();
-		if (IsValid(BNCGS) == false)
+		if (IsValid(BNCGS))
 		{
 			BNCGS->SetTimeout(0);
 		}
 	}else
 	{
-		FString GameDelayString = FString::Printf(TEXT("%s가 퇴장하여 게임을 재시작합니다"));
+		FString GameDelayString = FString::Printf(TEXT("%s가 퇴장하여 게임을 재시작합니다"), *Nickname);
 		SendSystemNotificationMessage(FString::Printf(TEXT("재시작중...")));
 		SendSystemChattingMessage(GameDelayString);
 		bIsPlaying = false;
@@ -65,15 +144,17 @@ void ABNCGameModeBase::Logout(AController* Exiting)
 void ABNCGameModeBase::PlayerCustomLogin(AController* NewPlayer)
 {
 	ABNCPlayerController* BNCPlayerController = Cast<ABNCPlayerController>(NewPlayer);
-	if (IsValid(BNCPlayerController))
-	{
-		PlayerControllers.Add(BNCPlayerController);
-	}
+	if (IsValid(BNCPlayerController) == false)
+		return;
 	
 	ABNCPlayerState* BNCPS = BNCPlayerController->GetPlayerState<ABNCPlayerState>();
+	if (IsValid(BNCPS) == false)
+		return;
+	
+	PlayerControllers.AddUnique(BNCPlayerController);
 	FString PlayerJoiningMessage = FString::Printf(TEXT("플레이어 %s가 접속하였습니다"), *BNCPS->GetPlayerNickname());
 	
-	SendCommonChattingMessage(BNCPlayerController, PlayerJoiningMessage);
+	SendCommonChattingMessage(PlayerJoiningMessage);
 	
 	
 	if (GetPlayerCount()>=2)
@@ -100,14 +181,18 @@ void ABNCGameModeBase::PlayerCustomLogin(AController* NewPlayer)
 void ABNCGameModeBase::ProcessChattingMessage(ABNCPlayerController* InChattingPlayerController, const FString& InChatMessageString)
 {
 	ABNCPlayerState* BNCPS = InChattingPlayerController->GetPlayerState<ABNCPlayerState>();
+	if (IsValid(BNCPS) == false)
+		return;
+	
 	FString PlayerName;
-	if (IsValid(BNCPS))
+	PlayerName = BNCPS->GetPlayerNickname();
+	if (PlayerName.IsEmpty() == true)
 	{
-		PlayerName = BNCPS->GetPlayerNickname();
-		if (PlayerName.IsEmpty() == true)
-			return;
+		return;
 	}
-	if (bIsPlaying == true && PlayerControllers[CurrentPlayerIndex]==InChattingPlayerController && IsGuessingNumberString(InChatMessageString))
+	
+	const bool bIsCurrentTurnPlayer = PlayerControllers.IsValidIndex(CurrentPlayerIndex) && PlayerControllers[CurrentPlayerIndex] == InChattingPlayerController;
+	if (bIsPlaying == true && bIsCurrentTurnPlayer && IsGuessingNumberString(InChatMessageString))
 	{
 		if (BNCPS->GetCurrentGuessCount() >= BNCPS->GetMaxGuessCount())
 		{
@@ -122,110 +207,70 @@ void ABNCGameModeBase::ProcessChattingMessage(ABNCPlayerController* InChattingPl
 		int32 StrikeCount = FCString::Atoi(*ResultString.Left(1));
 		
 		//
-		CurrentPlayerIndex++;
-		if (CurrentPlayerIndex >= PlayerControllers.Num())
-		{
-			CurrentPlayerIndex=0;
-		}
+		AdvanceCurrentPlayer();
 		
-		ABNCGameState* BNCGS = GetGameState<ABNCGameState>();
-		BNCGS->SetTimeout();
-		GetWorldTimerManager().SetTimer(AnswerTimerHandle, this, &ABNCGameModeBase::PlayerAnswerTimeout, 10, false);
-		SendSystemNotificationMessage(FString::Printf(TEXT("%s의 턴!"), *PlayerControllers[CurrentPlayerIndex]->GetPlayerState<ABNCPlayerState>()->GetPlayerNickname()), FColor::Yellow);
+		StartAnswerTimer();
+		NotifyCurrentTurnPlayer();
 		
-		for (ABNCPlayerController* BNCPlayerController : PlayerControllers)
+		ForEachPlayerController([&](ABNCPlayerController* BNCPlayerController)
 		{
-			if (IsValid(BNCPlayerController) == true)
-			{
-				FString JudgeMessageCombined = FString::Printf(
-					TEXT("%s : %s -> %s, 남은 횟수 : %d / %d"),
-					*BNCPS->GetPlayerNickname(),
-					*InChatMessageString,
-					*ResultString, 
-					BNCPS->GetCurrentGuessCount(),
-					BNCPS->GetMaxGuessCount());
-				
-				//BNCPlayerController->ClientSetChatMessageString(JudgeMessageCombined);
-				BNCPlayerController->ClientAddSystemMessage(JudgeMessageCombined);
-			}
-		}
+			FString JudgeMessageCombined = FString::Printf(
+				TEXT("%s : %s -> %s, 남은 횟수 : %d / %d"),
+				*BNCPS->GetPlayerNickname(),
+				*InChatMessageString,
+				*ResultString, 
+				BNCPS->GetCurrentGuessCount(),
+				BNCPS->GetMaxGuessCount());
+			
+			//BNCPlayerController->ClientSetChatMessageString(JudgeMessageCombined);
+			BNCPlayerController->ClientAddSystemMessage(JudgeMessageCombined);
+		});
 		if (StrikeCount == 3)
 		{
 			JudgeGame(InChattingPlayerController, StrikeCount);
 		}
-		bool IsEnded = true;
-		for (ABNCPlayerController* BNCPlayerController : PlayerControllers)
+		if (AreAllPlayersOutOfGuesses())
 		{
-			ABNCPlayerState* CPS = BNCPlayerController->GetPlayerState<ABNCPlayerState>();
-			if (IsValid(CPS) && CPS->GetCurrentGuessCount() <= 2)
-			{
-				IsEnded = false;
-				break;
-			}
-		}
-		if (IsEnded == true)
-		{
-			bIsPlaying = false;
-			FString DrawNotificationText = FString::Printf(TEXT("무승부"));
-			FString SystemMessage = FString::Printf(TEXT("정답은 %s이었습니다. 5초후 게임을 재시작합니다"), *Answer);
-			
-			SendSystemNotificationMessage(DrawNotificationText, FColor::Orange);
-			SendSystemChattingMessage(SystemMessage);
-			
-			GetWorldTimerManager().SetTimer(RestartTimerHandle, this, &ABNCGameModeBase::ResetGame, 5, false);
-			GetWorldTimerManager().ClearTimer(AnswerTimerHandle);
+			HandleDrawGame();
 			//ResetGame();
 		}
 	}
 	else
 	{
 		//일반 메세지
-		for (ABNCPlayerController* BNCPlayerController : PlayerControllers)
+		ForEachPlayerController([&](ABNCPlayerController* BNCPlayerController)
 		{
-			if (IsValid(BNCPlayerController) == true)
-			{
-				FString CommonChatMessageCombined = FString::Printf(
-					TEXT("%s : %s"),
-					*BNCPS->GetPlayerNickname(),
-					*InChatMessageString);
-				BNCPlayerController->ClientSetChatMessageString(CommonChatMessageCombined);
-			}
-		}
+			FString CommonChatMessageCombined = FString::Printf(
+				TEXT("%s : %s"),
+				*BNCPS->GetPlayerNickname(),
+				*InChatMessageString);
+			BNCPlayerController->ClientSetChatMessageString(CommonChatMessageCombined);
+		});
 	}
 }
 
-void ABNCGameModeBase::SendCommonChattingMessage(ABNCPlayerController* InPlayerController,
-	const FString& InChatMessageString)
+void ABNCGameModeBase::SendCommonChattingMessage(const FString& InChatMessageString)
 {
-	for (ABNCPlayerController* BNCPlayerController : PlayerControllers)
+	ForEachPlayerController([&](ABNCPlayerController* BNCPlayerController)
 	{
-		if (IsValid(BNCPlayerController))
-		{
-			BNCPlayerController->ClientSetChatMessageString(InChatMessageString);
-		}
-	}
+		BNCPlayerController->ClientSetChatMessageString(InChatMessageString);
+	});
 }
 
 void ABNCGameModeBase::SendSystemChattingMessage(const FString& SystemMessageString, FColor InColor)
 {
-	for (ABNCPlayerController* BNCPlayerController : PlayerControllers)
+	ForEachPlayerController([&](ABNCPlayerController* BNCPlayerController)
 	{
-		if (IsValid(BNCPlayerController))
-		{
-			BNCPlayerController->ClientAddSystemMessage(SystemMessageString, FColor::Orange);
-		}
-	}
+		BNCPlayerController->ClientAddSystemMessage(SystemMessageString, InColor);
+	});
 }
 
 void ABNCGameModeBase::SendSystemNotificationMessage(const FString& SystemMessageString, FColor InColor)
 {
-	for (ABNCPlayerController* BNCPlayerController : PlayerControllers)
+	ForEachPlayerController([&](ABNCPlayerController* BNCPlayerController)
 	{
-		if (IsValid(BNCPlayerController))
-		{
-			BNCPlayerController->ClientSetNotificationMessage(SystemMessageString, InColor);
-		}
-	}
+		BNCPlayerController->ClientSetNotificationMessage(SystemMessageString, InColor);
+	});
 }
 
 bool ABNCGameModeBase::IsGuessingNumberString(const FString& InNumber)
@@ -262,14 +307,14 @@ void ABNCGameModeBase::IncreaseGuessCount(ABNCPlayerController* InChattingPlayer
 
 void ABNCGameModeBase::ResetGuessCount()
 {
-	for (ABNCPlayerController* BNCPlayerController : PlayerControllers)
+	ForEachPlayerController([](ABNCPlayerController* BNCPlayerController)
 	{
-		if (IsValid(BNCPlayerController) == true)
+		ABNCPlayerState* BNCPS = BNCPlayerController->GetPlayerState<ABNCPlayerState>();
+		if (IsValid(BNCPS))
 		{
-			ABNCPlayerState* BNCPS = BNCPlayerController->GetPlayerState<ABNCPlayerState>();
 			BNCPS->SetCurrentGuessCount(0);
 		}
-	}
+	});
 }
 
 void ABNCGameModeBase::JudgeGame(ABNCPlayerController* InPlayerController, int32 StrikeCount)
@@ -286,6 +331,7 @@ void ABNCGameModeBase::JudgeGame(ABNCPlayerController* InPlayerController, int32
 		SendSystemNotificationMessage(WinnerString, FColor::Green);
 		SendSystemChattingMessage(ResultMessageString);
 		GetWorldTimerManager().ClearTimer(AnswerTimerHandle);
+		StartAnswerTimer(0);
 		GetWorldTimerManager().SetTimer(RestartTimerHandle, this, &ABNCGameModeBase::ResetGame, 5, false);
 	}
 	else
@@ -320,32 +366,36 @@ FString ABNCGameModeBase::JudgeResult(const FString& InGuessNumberString)
 
 void ABNCGameModeBase::ResetGame()
 {
-	for (ABNCPlayerController* PlayerController : PlayerControllers)
+	ForEachPlayerController([](ABNCPlayerController* PlayerController)
 	{
 		PlayerController->ClearSystemMessage();
-	}
+	});
 	CurrentPlayerIndex = 0;
-	//랜덤으로 섞기
+	//랜덤으로 섞기 알고리즘
 	Algo::RandomShuffle(PlayerControllers);
 	
 	//상태 초기화 하고
 	ResetGuessCount();
 	GenerateNewAnswer();
 	
+	if (PlayerControllers.IsEmpty())
+	{
+		bIsPlaying = false;
+		return;
+	}
 	
-	
-	FString NewGameNotificationMessage = FString::Printf(TEXT("%s의 턴!"), *PlayerControllers[0]->GetPlayerState<ABNCPlayerState>()->GetPlayerNickname());
-	SendSystemNotificationMessage(NewGameNotificationMessage, FColor::Yellow);
 	
 	bIsPlaying = true;
-	ABNCGameState* BNCGS = GetGameState<ABNCGameState>();
-	BNCGS->SetTimeout();
-	GetWorldTimerManager().SetTimer(AnswerTimerHandle, this, &ABNCGameModeBase::PlayerAnswerTimeout, 10, false);
+	NotifyCurrentTurnPlayer();
+	StartAnswerTimer();
 }
 
 void ABNCGameModeBase::PlayerAnswerTimeout()
 {
 	//현재 플레이어
+	if (PlayerControllers.IsValidIndex(CurrentPlayerIndex) == false)
+		return;
+	
 	ABNCPlayerController* PlayerController = PlayerControllers[CurrentPlayerIndex];
 	if (IsValid(PlayerController) == false)
 		return;
@@ -357,42 +407,16 @@ void ABNCGameModeBase::PlayerAnswerTimeout()
 	SendSystemChattingMessage(TimeoutMessageString, FColor::Red);
 	BNCPS->SetCurrentGuessCount(BNCPS->GetCurrentGuessCount()+1);
 	
-	bool IsEnded = true;
-	for (ABNCPlayerController* BNCPlayerController : PlayerControllers)
+	if (AreAllPlayersOutOfGuesses())
 	{
-		ABNCPlayerState* CPS = BNCPlayerController->GetPlayerState<ABNCPlayerState>();
-		if (IsValid(CPS) && CPS->GetCurrentGuessCount() <= 2)
-		{
-			IsEnded = false;
-			break;
-		}
-	}
-	if (IsEnded == true)
-	{
-		bIsPlaying = false;
-		FString DrawNotificationText = FString::Printf(TEXT("무승부"));
-		FString SystemMessage = FString::Printf(TEXT("정답은 %s이었습니다. 5초후 게임을 재시작합니다"), *Answer);
-			
-		SendSystemNotificationMessage(DrawNotificationText, FColor::Orange);
-		SendSystemChattingMessage(SystemMessage);
-			
-		GetWorldTimerManager().SetTimer(RestartTimerHandle, this, &ABNCGameModeBase::ResetGame, 5, false);
-		GetWorldTimerManager().ClearTimer(AnswerTimerHandle);
+		HandleDrawGame();
 		return;
 	}
 	
 	
-	ABNCGameState* BNCGS = GetGameState<ABNCGameState>();
-	BNCGS->SetTimeout();
-	
-	CurrentPlayerIndex++;
-	if (CurrentPlayerIndex >= PlayerControllers.Num())
-	{
-		CurrentPlayerIndex=0;
-	}
-	SendSystemNotificationMessage(FString::Printf(TEXT("%s의 턴!"), *PlayerControllers[CurrentPlayerIndex]->GetPlayerState<ABNCPlayerState>()->GetPlayerNickname()), FColor::Yellow);
-	
-	GetWorldTimerManager().SetTimer(AnswerTimerHandle, this, &ABNCGameModeBase::PlayerAnswerTimeout, 10, false);
+	AdvanceCurrentPlayer();
+	StartAnswerTimer();
+	NotifyCurrentTurnPlayer();
 }
 
 

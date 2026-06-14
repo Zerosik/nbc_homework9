@@ -10,6 +10,7 @@ class UBNCChatting;
 class UBNCChatMessage;
 class UServerNotificationWidget;
 class UPlayTimerWidget;
+class UScrollBox;
 /**
  * 
  */
@@ -69,6 +70,11 @@ public:
 	UFUNCTION(Client, Reliable)
 	void ClearSystemMessage();
 private:
+	void CreateChatInputWidget();
+	void CreateNotificationWidget();
+	void CreateTimeoutWidget();
+	void AddMessageToScrollBox(UScrollBox* TargetScrollBox, const FString& InChatMessageString, FColor InColor);
+	
 	UFUNCTION(Server, Reliable)
 	void ServerLogout();
 	

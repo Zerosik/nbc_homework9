@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
+#include "Templates/Function.h"
 #include "BNCGameModeBase.generated.h"
 
 class ABNCPlayerController;
@@ -27,7 +28,7 @@ public:
 	// 채팅 메시지 처리
 	void ProcessChattingMessage(ABNCPlayerController* InChattingPlayerController, const FString &InChatMessageString);
 	
-	void SendCommonChattingMessage(ABNCPlayerController* InPlayerController, const FString &InChatMessageString);
+	void SendCommonChattingMessage(const FString &InChatMessageString);
 	
 	void SendSystemChattingMessage(const FString &SystemMessageString, FColor InColor = FColor::Orange);
 	void SendSystemNotificationMessage(const FString &SystemMessageString, FColor InColor = FColor::White);
@@ -54,6 +55,12 @@ public:
 	
 private:
 	void GenerateNewAnswer();
+	void ForEachPlayerController(TFunctionRef<void(ABNCPlayerController*)> Callback) const;
+	bool AreAllPlayersOutOfGuesses() const;
+	void HandleDrawGame();
+	void AdvanceCurrentPlayer();
+	void StartAnswerTimer(float TimeLimit = 10.f);
+	void NotifyCurrentTurnPlayer();
 	
 	int32 GetPlayerCount();
 	

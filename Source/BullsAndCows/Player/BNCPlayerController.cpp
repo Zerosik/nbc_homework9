@@ -4,8 +4,6 @@
 #include "Player/BNCPlayerController.h"
 
 #include "BNCPlayerState.h"
-#include "InterchangeResult.h"
-#include "../../../../../../../../Program Files/Epic Games/UE_5.5/Engine/Plugins/Compression/OodleNetwork/Sdks/2.9.12/include/oodle2net.h"
 #include "Components/ScrollBox.h"
 #include "Game/BNCGameModeBase.h"
 #include "Kismet/GameplayStatics.h"
@@ -19,6 +17,59 @@ ABNCPlayerController::ABNCPlayerController()
 	
 }
 
+void ABNCPlayerController::CreateChatInputWidget()
+{
+	if (IsValid(ChatInputWidgetClass) == false)
+		return;
+	
+	ChatInputWidgetInstance = CreateWidget<UBNCChatting>(this, ChatInputWidgetClass);
+	if (IsValid(ChatInputWidgetInstance))
+	{
+		ChatInputWidgetInstance->AddToViewport();
+		FString InfoString = FString::Printf(TEXT("먼저 닉네임을 입력해주세요"));
+		AddChatMessage(InfoString, FColor::Orange);
+	}
+}
+
+void ABNCPlayerController::CreateNotificationWidget()
+{
+	if (IsValid(NotificationWidgetClass) == false)
+		return;
+	
+	NotificationWidgetInstance = CreateWidget<UServerNotificationWidget>(this, NotificationWidgetClass);
+	if (IsValid(NotificationWidgetInstance))
+	{
+		NotificationWidgetInstance->AddToViewport();
+	}
+}
+
+void ABNCPlayerController::CreateTimeoutWidget()
+{
+	if (IsValid(TimeoutWidgetClass) == false)
+		return;
+	
+	TimeoutWidgetInstance = CreateWidget<UPlayTimerWidget>(this, TimeoutWidgetClass);
+	if (IsValid(TimeoutWidgetInstance))
+	{
+		TimeoutWidgetInstance->AddToViewport();
+	}
+}
+
+void ABNCPlayerController::AddMessageToScrollBox(UScrollBox* TargetScrollBox, const FString& InChatMessageString, FColor InColor)
+{
+	if (IsValid(ChatMessageWidgetClass) == false || IsValid(TargetScrollBox) == false)
+		return;
+	
+	UBNCChatMessage* ChatMessage = CreateWidget<UBNCChatMessage>(this, ChatMessageWidgetClass);
+	if (IsValid(ChatMessage))
+	{
+		ChatMessage->SetChatMessage(InChatMessageString, InColor);
+		TargetScrollBox->AddChild(ChatMessage);
+		TargetScrollBox->ScrollToEnd();
+		TargetScrollBox->bAnimateWheelScrolling = true;
+	}
+}
+
 void ABNCPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
@@ -28,33 +79,9 @@ void ABNCPlayerController::BeginPlay()
 	FInputModeUIOnly InputModeUIOnly;
 	SetInputMode(InputModeUIOnly);
 	
-	if (IsValid(ChatInputWidgetClass))
-	{
-		ChatInputWidgetInstance = CreateWidget<UBNCChatting>(this, ChatInputWidgetClass);
-		if (IsValid(ChatInputWidgetInstance))
-		{
-			ChatInputWidgetInstance->AddToViewport();
-			FString InfoString = FString::Printf(TEXT("먼저 닉네임을 입력해주세요"));
-			AddChatMessage(InfoString, FColor::Orange);
-		}
-	}
-	
-	if (IsValid(NotificationWidgetClass))
-	{
-		NotificationWidgetInstance = CreateWidget<UServerNotificationWidget>(this, NotificationWidgetClass);
-		if (IsValid(NotificationWidgetInstance))
-		{
-			NotificationWidgetInstance->AddToViewport();
-		}
-	}
-	if (IsValid(TimeoutWidgetClass))
-	{
-		TimeoutWidgetInstance = CreateWidget<UPlayTimerWidget>(this, TimeoutWidgetClass);
-		if (IsValid(TimeoutWidgetInstance))
-		{
-			TimeoutWidgetInstance->AddToViewport();
-		}
-	}
+	CreateChatInputWidget();
+	CreateNotificationWidget();
+	CreateTimeoutWidget();
 }
 
 void ABNCPlayerController::SetChatMessageString(const FString& InChatMessageString)
@@ -87,17 +114,8 @@ void ABNCPlayerController::AddChatMessage(const FString& InChatMessageString, FC
 {
 	if (IsLocalController() == false)
 		return;
-	if (IsValid(ChatMessageWidgetClass) == false)
-		return;
-	UBNCChatMessage* ChatMessage = CreateWidget<UBNCChatMessage>(this, ChatMessageWidgetClass);
-	if (IsValid(ChatMessage))
-	{
-		ChatMessage->SetChatMessage(InChatMessageString, InColor);
-		ChatInputWidgetInstance->ChatScrollBox->AddChild(ChatMessage);
-		ChatInputWidgetInstance->ChatScrollBox->ScrollToEnd();
-		ChatInputWidgetInstance->ChatScrollBox->bAnimateWheelScrolling = true;
-	}
 	
+	AddMessageToScrollBox(IsValid(ChatInputWidgetInstance) ? ChatInputWidgetInstance->ChatScrollBox : nullptr, InChatMessageString, InColor);
 }
 
 void ABNCPlayerController::ServerLogout_Implementation()
@@ -132,16 +150,8 @@ void ABNCPlayerController::ClientAddSystemMessage_Implementation(const FString& 
 {
 	if (IsLocalController() == false)
 		return;
-	if (IsValid(ChatMessageWidgetClass) == false)
-		return;
-	UBNCChatMessage* ChatMessage = CreateWidget<UBNCChatMessage>(this, ChatMessageWidgetClass);
-	if (IsValid(ChatMessage))
-	{
-		ChatMessage->SetChatMessage(InChatMessageString, InColor);
-		NotificationWidgetInstance->MessageScrollBox->AddChild(ChatMessage);
-		NotificationWidgetInstance->MessageScrollBox->ScrollToEnd();
-		NotificationWidgetInstance->MessageScrollBox->bAnimateWheelScrolling = true;
-	}
+	
+	AddMessageToScrollBox(IsValid(NotificationWidgetInstance) ? NotificationWidgetInstance->MessageScrollBox : nullptr, InChatMessageString, InColor);
 }
 
 void ABNCPlayerController::MulticastSendMessageString_Implementation(const FString& InChatMessageString)
@@ -179,7 +189,7 @@ void ABNCPlayerController::ServerSetChatMessageString_Implementation(const FStri
 		{
 			BNCGM->PlayerCustomLogin(this);
 			//일반 전체메시지
-			//BNCGM->SendCommonChattingMessage(this, InfoString);
+			//BNCGM->SendCommonChattingMessage(InfoString);
 		}
 		return;
 	}
