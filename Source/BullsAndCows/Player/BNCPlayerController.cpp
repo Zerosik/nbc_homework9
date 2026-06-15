@@ -104,8 +104,10 @@ void ABNCPlayerController::SetChatMessageString(const FString& InChatMessageStri
 	FString NameString = FString::Printf(TEXT("PlayerName : %s"),  *BNCPS->GetPlayerNickname());
 	*/
 	
+	FString InChatMessageStringTrimmed = InChatMessageString.TrimStartAndEnd();
+	
 	// 서버로 메시지 전달
-	ServerSetChatMessageString(InChatMessageString);
+	ServerSetChatMessageString(InChatMessageStringTrimmed);
 	
 	
 }

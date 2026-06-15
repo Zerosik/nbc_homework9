@@ -79,12 +79,14 @@ void ABNCGameModeBase::AdvanceCurrentPlayer()
 	}
 }
 
+
 void ABNCGameModeBase::StartAnswerTimer(float TimeLimit)
 {
 	if (ABNCGameState* BNCGS = GetGameState<ABNCGameState>())
 	{
 		BNCGS->SetTimeout(TimeLimit);
 	}
+	// TimeLimit을 0으로 호출시 타이머 UI를 정리할수있도록 함.
 	if (TimeLimit>0)
 		GetWorldTimerManager().SetTimer(AnswerTimerHandle, this, &ABNCGameModeBase::PlayerAnswerTimeout, 10, false);
 }
@@ -135,7 +137,9 @@ void ABNCGameModeBase::Logout(AController* Exiting)
 		SendSystemNotificationMessage(FString::Printf(TEXT("재시작중...")));
 		SendSystemChattingMessage(GameDelayString);
 		bIsPlaying = false;
+		GetWorldTimerManager().ClearTimer(AnswerTimerHandle);
 		GetWorldTimerManager().SetTimer(RestartTimerHandle, this, &ABNCGameModeBase::ResetGame, 3, false);
+		StartAnswerTimer(0);
 		
 	}
 	
@@ -175,6 +179,8 @@ void ABNCGameModeBase::PlayerCustomLogin(AController* NewPlayer)
 		SendSystemNotificationMessage(FString::Printf(TEXT("시작 대기중")));
 		SendSystemChattingMessage(StartGameMessage);
 		GetWorldTimerManager().SetTimer(RestartTimerHandle, this, &ABNCGameModeBase::ResetGame, 3, false);
+		StartAnswerTimer(0);
+		
 	}
 }
 
