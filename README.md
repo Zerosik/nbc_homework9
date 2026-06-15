@@ -79,7 +79,7 @@ PlayerController 리스트와 int32 index값 두개로 플레이어의 턴을 �
 
    **플레이어 닉네임 설정**
 
-   각 플레이어의 첫 입력을 닉네임 입력으로 설정하고,
+   각 플레이어의 첫 입력을 닉네임 입력으로 설정하고, 닉네임은 PlayerState에서 Replicate를 설정하여 동기화함.
 
    OnPostLogin대신 닉네임 설정시를 로그인처럼 사용하기 위한 PlayerCustomLogin()함수를 새로 작성하여 기존 로그인처럼 작동하게함.
 
